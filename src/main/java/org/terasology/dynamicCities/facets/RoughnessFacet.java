@@ -35,7 +35,8 @@ public class RoughnessFacet extends Grid2DFloatFacet {
     public void calcRoughness(Vector2i gridPoint, BaseFieldFacet2D facet) {
 
         int halfGridSize = Math.round(gridSize / 2);
-        Rect2i gridCell = Rect2i.createFromMinAndMax(gridPoint.sub(halfGridSize, halfGridSize), gridPoint.add(halfGridSize, halfGridSize));
+        Rect2i gridCell = Rect2i.createFromMinAndMax(new Vector2i(gridPoint).sub(halfGridSize, halfGridSize),
+                new Vector2i(gridPoint).add(halfGridSize, halfGridSize));
         float deviation = 0;
         float meanValue = meanHeight(gridCell, facet);
         for(BaseVector2i pos : gridCell.contents()) {
@@ -70,10 +71,12 @@ public class RoughnessFacet extends Grid2DFloatFacet {
 
     public float getMeanDeviation() {
         float mean = 0;
-        for(BaseVector2i pos : getWorldRegion().contents()) {
-            mean += getWorld(pos);
+        int i = 0;
+        for(BaseVector2i pos : gridWorldRegion.contents()) {
+            mean += getWorldGridIndex(pos.x(), pos.y());
+            i++;
         }
-        mean /= getGridRelativeRegion().area();
+        mean /= i;
 
         return mean;
     }

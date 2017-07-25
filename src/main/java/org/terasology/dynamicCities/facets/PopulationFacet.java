@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 MovingBlocks
+ * Copyright 2017 MovingBlocks
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,30 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package org.terasology.dynamicCities.sites;
+package org.terasology.dynamicCities.facets;
 
 import org.terasology.math.Region3i;
 import org.terasology.world.generation.Border3D;
-import org.terasology.world.generation.facets.base.BaseFacet2D;
+import org.terasology.world.generation.facets.base.BaseObjectFacet2D;
 
-/**
- *
- */
-public class SiteFacet extends BaseFacet2D {
+public class PopulationFacet extends BaseObjectFacet2D<Integer> {
 
-    private SiteComponent siteComponent = null;
-
-    public SiteFacet(Region3i targetRegion, Border3D border) {
-        super(targetRegion, border);
-    }
-
-    public void setSiteComponent(SiteComponent siteComponent) {
-        this.siteComponent = siteComponent;
-    }
-
-    public SiteComponent getSiteComponent() {
-        return siteComponent;
+    public PopulationFacet(Region3i targetRegion, Border3D border) {
+        super(targetRegion, border, Integer.class);
     }
 
 }

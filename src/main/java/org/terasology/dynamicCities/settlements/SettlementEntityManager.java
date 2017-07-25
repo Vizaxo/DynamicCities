@@ -25,25 +25,18 @@ import org.terasology.dynamicCities.construction.BlockBufferSystem;
 import org.terasology.dynamicCities.construction.Construction;
 import org.terasology.dynamicCities.construction.TreeRemovalSystem;
 import org.terasology.dynamicCities.districts.DistrictManager;
+import org.terasology.dynamicCities.facets.PopulationFacet;
 import org.terasology.dynamicCities.facets.RoughnessFacet;
 import org.terasology.dynamicCities.parcels.DynParcel;
 import org.terasology.dynamicCities.parcels.ParcelList;
 import org.terasology.dynamicCities.population.CultureComponent;
 import org.terasology.dynamicCities.population.CultureManager;
 import org.terasology.dynamicCities.population.PopulationComponent;
-import org.terasology.dynamicCities.region.RegionEntityManager;
-import org.terasology.dynamicCities.region.components.RegionEntitiesComponent;
-import org.terasology.dynamicCities.region.components.ResourceFacetComponent;
-import org.terasology.dynamicCities.region.components.RoughnessFacetComponent;
-import org.terasology.dynamicCities.region.components.UnassignedRegionComponent;
-import org.terasology.dynamicCities.region.events.AssignRegionEvent;
-import org.terasology.dynamicCities.resource.ResourceType;
 import org.terasology.dynamicCities.settlements.components.ActiveSettlementComponent;
 import org.terasology.dynamicCities.settlements.components.DistrictFacetComponent;
 import org.terasology.dynamicCities.settlements.events.CheckBuildingSpawnPreconditionsEvent;
 import org.terasology.dynamicCities.settlements.events.SettlementGrowthEvent;
 import org.terasology.dynamicCities.settlements.events.SettlementRegisterEvent;
-import org.terasology.dynamicCities.sites.SiteComponent;
 import org.terasology.dynamicCities.utilities.Toolbox;
 import org.terasology.economy.components.MarketSubscriberComponent;
 import org.terasology.economy.events.SubscriberRegistrationEvent;
@@ -52,6 +45,7 @@ import org.terasology.entitySystem.entity.EntityRef;
 import org.terasology.entitySystem.event.ReceiveEvent;
 import org.terasology.entitySystem.sectors.LoadedSectorUpdateEvent;
 import org.terasology.entitySystem.sectors.SectorSimulationEvent;
+import org.terasology.entitySystem.sectors.SectorUtil;
 import org.terasology.entitySystem.systems.BaseComponentSystem;
 import org.terasology.entitySystem.systems.RegisterMode;
 import org.terasology.entitySystem.systems.RegisterSystem;
@@ -59,12 +53,13 @@ import org.terasology.entitySystem.systems.UpdateSubscriberSystem;
 import org.terasology.logic.location.LocationComponent;
 import org.terasology.logic.nameTags.NameTagComponent;
 import org.terasology.logic.players.MinimapSystem;
+import org.terasology.math.ChunkMath;
 import org.terasology.math.Region3i;
 import org.terasology.math.geom.BaseVector2i;
 import org.terasology.math.geom.Circle;
 import org.terasology.math.geom.Rect2i;
+import org.terasology.math.geom.Vector2f;
 import org.terasology.math.geom.Vector2i;
-import org.terasology.math.geom.Vector3f;
 import org.terasology.math.geom.Vector3i;
 import org.terasology.network.NetworkComponent;
 import org.terasology.registry.In;
@@ -72,9 +67,13 @@ import org.terasology.registry.Share;
 import org.terasology.rendering.nui.Color;
 import org.terasology.utilities.random.FastRandom;
 import org.terasology.utilities.random.Random;
+import org.terasology.world.WorldComponent;
 import org.terasology.world.WorldProvider;
+import org.terasology.world.chunks.event.OnChunkGenerated;
 import org.terasology.world.generation.Border3D;
+import org.terasology.world.generation.Region;
 import org.terasology.world.generation.World;
+import org.terasology.world.generation.facets.SurfaceHeightFacet;
 import org.terasology.world.generator.WorldGenerator;
 
 import java.util.ArrayList;
@@ -84,18 +83,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import static org.terasology.world.chunks.ChunkConstants.CHUNK_SIZE;
+
 
 @Share(value = SettlementEntityManager.class)
 @RegisterSystem(RegisterMode.AUTHORITY)
-public class SettlementEntityManager extends BaseComponentSystem implements UpdateSubscriberSystem {
+public class SettlementEntityManager extends BaseComponentSystem {
 
     @In
     private EntityManager entityManager;
 
     private EntityRef settlementEntities;
-
-    @In
-    private RegionEntityManager regionEntityManager;
 
     @In
     private Construction constructer;
@@ -134,34 +132,27 @@ public class SettlementEntityManager extends BaseComponentSystem implements Upda
     private Random rng;
 
     private Logger logger = LoggerFactory.getLogger(SettlementEntityManager.class);
+
     @Override
     public void postBegin() {
 
         settlementEntities = settlementCachingSystem.getSettlementCacheEntity();
-        rng = new FastRandom(regionEntityManager.hashCode() & 0x921233);
+        rng = new FastRandom(this.hashCode() & 0x921233);
 
     }
 
-    @Override
-    public void update(float delta) {
-        if (!settlementCachingSystem.isInitialised()) {
-            return;
-        } else if (settlementCachingSystem.isInitialised() && settlementEntities == null) {
-            settlementEntities = settlementCachingSystem.getSettlementCacheEntity();
-        }
-    }
+    @ReceiveEvent(components = WorldComponent.class)
+    public void createSettlements(OnChunkGenerated event, EntityRef worldEntity) {
+        Vector3i chunkPos = event.getChunkPos();
+        Vector3i pos = new Vector3i(chunkPos).mul(CHUNK_SIZE.x, CHUNK_SIZE.y, CHUNK_SIZE.z);
 
-    @ReceiveEvent(components = SiteComponent.class)
-    public void createSettlements(SectorSimulationEvent event, EntityRef siteRegion) {
-        boolean checkDistance = checkMinDistance(siteRegion);
-        boolean checkBuildArea = checkBuildArea(siteRegion);
-        if (checkDistance && regionEntityManager.checkSidesLoadedNear(siteRegion)
-                && checkBuildArea) {
-            EntityRef newSettlement = createSettlement(siteRegion);
+        //Set the y coordinate to the surface height
+        Region3i posRegion = Region3i.createFromMinAndSize(pos, new Vector3i(1, 1, 1));
+        pos.setY(Math.round(worldGenerator.getWorld().getWorldData(posRegion).getFacet(SurfaceHeightFacet.class).getWorld(pos.x, pos.z)));
+
+        if (ChunkMath.blockInChunk(pos, chunkPos) && checkMinDistance(pos) && checkBuildArea(pos)) {
+            EntityRef newSettlement = createSettlement(pos);
             newSettlement.send(new SettlementRegisterEvent());
-            siteRegion.removeComponent(SiteComponent.class);
-        } else if (!checkDistance || !checkBuildArea) {
-            siteRegion.removeComponent(SiteComponent.class);
         }
     }
 
@@ -177,53 +168,37 @@ public class SettlementEntityManager extends BaseComponentSystem implements Upda
     }
 
 
-    public boolean checkMinDistance(EntityRef siteRegion) {
-        Vector3f sitePos = siteRegion.getComponent(LocationComponent.class).getLocalPosition();
-        Vector2i pos = new Vector2i(sitePos.x(), sitePos.z());
+    public boolean checkMinDistance(Vector3i position) {
+        Vector2i pos2d = new Vector2i(position.x(), position.z());
         SettlementsCacheComponent container = settlementEntities.getComponent(SettlementsCacheComponent.class);
         for (String vector2iString : container.settlementEntities.keySet()) {
             Vector2i activePosition = Toolbox.stringToVector2i(vector2iString);
-            if (pos.distance(activePosition) < minDistance) {
+            if (pos2d.distance(activePosition) < minDistance) {
                 return false;
             }
         }
         return true;
     }
 
-    public boolean checkMinDistanceCell(Vector2i pos) {
-        if (!regionEntityManager.cellIsLoaded(pos)) {
-            return true;
-        }
-
-        SettlementsCacheComponent container = settlementEntities.getComponent(SettlementsCacheComponent.class);
-        for (String vector2iString : container.settlementEntities.keySet()) {
-            Vector2i activePosition = Toolbox.stringToVector2i(vector2iString);
-            if (pos.distance(activePosition) < minDistance - settlementMaxRadius) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    public boolean checkMinDistanceCell(String posString) {
-        return checkMinDistanceCell(Toolbox.stringToVector2i(posString));
-    }
-
-    private EntityRef createSettlement(EntityRef siteRegion) {
+    private EntityRef createSettlement(Vector3i position) {
         EntityRef settlementEntity = entityManager.createSectorEntity(1);
 
-        SiteComponent siteComponent = siteRegion.getComponent(SiteComponent.class);
-        LocationComponent locationComponent = siteRegion.getComponent(LocationComponent.class);
-        PopulationComponent populationComponent = new PopulationComponent(siteComponent.getPopulation());
-        CultureComponent cultureComponent = cultureManager.getRandomCulture();
+        int population = getMinimalWorldRegion(position)
+                .getFacet(PopulationFacet.class)
+                .getWorld(position.x, position.z);
+        PopulationComponent populationComponent = new PopulationComponent(population);
 
-        //add surrounding regions to settlement
-        RegionEntitiesComponent regionEntitiesComponent = new RegionEntitiesComponent();
+        CultureComponent cultureComponent = cultureManager.getRandomCulture();
+        LocationComponent locationComponent = new LocationComponent(position.toVector3f());
 
         //Create the district facet and DistrictTypeMap
-        Region3i region = Region3i.createFromCenterExtents(new Vector3i(locationComponent.getLocalPosition()), SettlementConstants.SETTLEMENT_RADIUS);
+        Region3i region = Region3i.createFromCenterExtents(position, SettlementConstants.SETTLEMENT_RADIUS);
         Border3D border = new Border3D(0, 0, 0);
-        DistrictFacetComponent districtGrid = new DistrictFacetComponent(region, border, SettlementConstants.DISTRICT_GRIDSIZE, siteComponent.hashCode(), districtManager, cultureComponent);
+
+        DistrictFacetComponent districtGrid = new DistrictFacetComponent(region, border,
+                SettlementConstants.DISTRICT_GRIDSIZE,
+                populationComponent.hashCode() & position.hashCode(),
+                districtManager, cultureComponent);
         if (districtGrid.districtMap.size() < 1) {
             logger.error("DistrictFacetComponent.districtMap not initialised!");
         }
@@ -236,7 +211,7 @@ public class SettlementEntityManager extends BaseComponentSystem implements Upda
 
         //NameTagStuff
         NameTagComponent settlementName = new NameTagComponent();
-        settlementName.text = "testcity regions: " + regionEntitiesComponent.regionEntities.size() + " " + populationComponent.populationSize;
+        settlementName.text = "testcity regions: " + populationComponent.populationSize;
         settlementName.textColor = Color.CYAN;
         settlementName.yOffset = 20;
         settlementName.scale = 20;
@@ -255,7 +230,6 @@ public class SettlementEntityManager extends BaseComponentSystem implements Upda
         settlementEntity.addComponent(cultureComponent);
         settlementEntity.addComponent(populationComponent);
         settlementEntity.addComponent(settlementName);
-        settlementEntity.addComponent(regionEntitiesComponent);
         settlementEntity.addComponent(parcels);
         settlementEntity.addComponent(buildingQueue);
         settlementEntity.addComponent(new ActiveSettlementComponent());
@@ -263,68 +237,54 @@ public class SettlementEntityManager extends BaseComponentSystem implements Upda
         settlementEntity.addComponent(populationSubscriberComponent);
         settlementEntity.setAlwaysRelevant(true);
 
-        //add region entities
-        getSurroundingRegions(settlementEntity);
-
         //Hook into the economy module's MarketUpdaterSystem
         settlementEntity.send(new SubscriberRegistrationEvent());
+
+
+        /* Add the watched chunks to the settlement */
+
+        //Convert the settlement radius into chunks
+        int settlementRadius = SettlementConstants.SETTLEMENT_RADIUS;
+        int chunkWidth = CHUNK_SIZE.x;
+        int settlementChunkRadius = settlementRadius / chunkWidth + (settlementRadius % chunkWidth == 0 ? 0 : 1);
+
+        //Work out the settlement chunk bounds
+        Vector3i centerChunk = ChunkMath.calcChunkPos(position);
+        Region3i settlementChunkBounds = Region3i.createFromMinMax(
+                new Vector3i(centerChunk).sub(settlementChunkRadius, 0, settlementChunkRadius),
+                new Vector3i(centerChunk).add(settlementChunkRadius, 0, settlementChunkRadius));
+
+        Set<Vector3i> watchedChunks = new HashSet<>();
+        for (Vector3i potentialChunk : settlementChunkBounds) {
+            if (potentialChunk.distance(centerChunk) <= settlementChunkRadius) {
+                watchedChunks.add(potentialChunk);
+            }
+        }
+        SectorUtil.addChunksToRegionComponent(settlementEntity, watchedChunks);
+
 
         return settlementEntity;
     }
 
     /**
-     * Adds the region entities within city reach to the RegionEntitiesComponent of a settlement
-     */
-    private void getSurroundingRegions(EntityRef settlement) {
-        RegionEntitiesComponent regionEntitiesComponent = settlement.getComponent(RegionEntitiesComponent.class);
-        ParcelList parcelList = settlement.getComponent(ParcelList.class);
-        LocationComponent locationComponent = settlement.getComponent(LocationComponent.class);
-        Vector2i pos = new Vector2i(locationComponent.getLocalPosition().x(),
-                locationComponent.getLocalPosition().z());
-        float radius = parcelList.cityRadius;
-        int size = (Math.round(radius / 32) >= 1) ? Math.round(radius / 32) : 1;
-        Rect2i settlementRectArea = Rect2i.createFromMinAndMax(-size, -size, size, size);
-        Circle settlementCircle = new Circle(pos.toVector2f(), radius);
-        Vector2i regionWorldPos = new Vector2i();
-
-        for (BaseVector2i regionPos : settlementRectArea.contents()) {
-            regionWorldPos.set(pos.x() + regionPos.x() * 32, pos.y() + regionPos.y() * 32);
-
-            if (settlementCircle.contains(regionWorldPos)) {
-                EntityRef region = regionEntityManager.getNearest(regionWorldPos);
-                if (region != null && region.hasComponent(UnassignedRegionComponent.class)) {
-                    LocationComponent location = region.getComponent(LocationComponent.class);
-                    Vector2i position = new Vector2i(location.getWorldPosition().x(), location.getWorldPosition().z());
-                    regionEntitiesComponent.regionEntities.put(position.toString(), region);
-                    region.send(new AssignRegionEvent());
-                }
-            }
-        }
-        settlement.saveComponent(regionEntitiesComponent);
-    }
-
-    /**
      * Currently only checks whether the area has enough flat spots.
      */
-    private boolean checkBuildArea(EntityRef siteRegion) {
-        LocationComponent siteLocation = siteRegion.getComponent(LocationComponent.class);
-        //Vector2i pos = new Vector2i(siteLocation.getLocalPosition().x(), siteLocation.getLocalPosition().z());
-        Vector2i pos = new Vector2i(siteLocation.getWorldPosition().x(), siteLocation.getWorldPosition().z());
+    private boolean checkBuildArea(Vector3i position) {
         int unusableRegionsCount = 0;
         Rect2i settlementRectArea = Rect2i.createFromMinAndMax(-3, -3, 3, 3);
-        Circle settlementCircle = new Circle(pos.toVector2f(), settlementMaxRadius);
+        Circle settlementCircle = new Circle(new Vector2f(position.x(), position.z()), settlementMaxRadius);
 
         World world = worldGenerator.getWorld();
 
         for (BaseVector2i regionPos : settlementRectArea.contents()) {
-            Vector2i regionWorldPos = new Vector2i(pos.x() + regionPos.x() * 32, pos.y() + regionPos.y() * 32);
+            Vector2i regionWorldPos = new Vector2i(position.x() + regionPos.x() * 32, position.y() + regionPos.y() * 32);
 
             Region3i region3i = Region3i.createFromCenterExtents(new Vector3i(regionWorldPos.x(), world.getSeaLevel(), regionWorldPos.y()), 16);
 
             if (settlementCircle.contains(regionWorldPos)) {
                 float deviation = world.getWorldData(region3i).getFacet(RoughnessFacet.class).getMeanDeviation();
 
-                if (deviation > SettlementConstants.MAX_BUILDABLE_ROUGHNESS * 2 ) {
+                if (deviation > SettlementConstants.MAX_BUILDABLE_ROUGHNESS) {
                     unusableRegionsCount++;
                 }
             }
@@ -374,7 +334,7 @@ public class SettlementEntityManager extends BaseComponentSystem implements Upda
         NameTagComponent nameTagComponent = settlement.getComponent(NameTagComponent.class);
         CultureComponent cultureComponent = settlement.getComponent(CultureComponent.class);
 
-        int maxIterations = 500;
+        int maxIterations = 20;
         int buildingSpawned = 0;
         List<String> zones = new ArrayList<>(buildingManager.getZones());
         Map<String, List<Vector2i>> minMaxSizes = buildingManager.getMinMaxSizePerZone();
@@ -424,7 +384,6 @@ public class SettlementEntityManager extends BaseComponentSystem implements Upda
                 if (!parcelOptional.isPresent() && parcels.cityRadius < SettlementConstants.SETTLEMENT_RADIUS) {
                     parcels.cityRadius += SettlementConstants.BUILD_RADIUS_INTERVALL;
                     //Add region entities of the now bigger zone
-                    getSurroundingRegions(settlement);
                     break;
                 } else if (!parcelOptional.isPresent()) {
                     break;
@@ -492,27 +451,33 @@ public class SettlementEntityManager extends BaseComponentSystem implements Upda
     }
 
     private boolean checkIfTerrainIsBuildable(Rect2i area) {
-        List<EntityRef> regions = regionEntityManager.getRegionsInArea(area);
-        if (regions.isEmpty()) {
-            //logger.debug("No regions found in area " + area.toString());
-            return false;
+        World world = worldGenerator.getWorld();
+
+        int surfaceHeightA = getSurfaceHeight(area.minX(), area.minY());
+        int surfaceHeightB = getSurfaceHeight(area.maxX(), area.maxY());
+
+        Vector3i min = new Vector3i(area.minX(), Math.min(surfaceHeightA, surfaceHeightB), area.minY());
+        Vector3i max = new Vector3i(area.maxX(), Math.max(surfaceHeightA, surfaceHeightB), area.maxY());
+
+        Region region = world.getWorldData(Region3i.createFromMinMax(min, max));
+
+        if (region.getRegion().isEmpty()) {
+            logger.info("Region is empty...");
         }
-        for (EntityRef region : regions) {
-            RoughnessFacetComponent roughnessFacetComponent = region.getComponent(RoughnessFacetComponent.class);
-            ResourceFacetComponent resourceFacetComponent = region.getComponent(ResourceFacetComponent.class);
-            if (roughnessFacetComponent == null) {
-                logger.error("No RoughnessFacetComponent found for region");
-                return false;
-            }
-            if (roughnessFacetComponent.meanDeviation > SettlementConstants.MAX_BUILDABLE_ROUGHNESS) {
-                return false;
-            }
-            if (resourceFacetComponent.getResourceSum(ResourceType.WATER.toString()) != 0) {
-                return false;
-            }
-        }
-        return true;
+
+        return region.getFacet(RoughnessFacet.class).getMeanDeviation() < SettlementConstants.MAX_BUILDABLE_ROUGHNESS &&
+                Math.min(surfaceHeightA, surfaceHeightB) > world.getSeaLevel() + 2;
     }
 
+    private Region getMinimalWorldRegion(Vector3i pos) {
+        return worldGenerator.getWorld()
+                .getWorldData(Region3i.createFromMinAndSize(pos, new Vector3i(1, 1, 1)));
+    }
+
+    private int getSurfaceHeight(int x, int y) {
+        return Math.round(getMinimalWorldRegion(new Vector3i(x, 0, y))
+                .getFacet(SurfaceHeightFacet.class)
+                .getWorld(x, y));
+    }
 
 }

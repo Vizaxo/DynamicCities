@@ -26,10 +26,9 @@ import org.terasology.core.world.generator.facetProviders.PerlinSurfaceTemperatu
 import org.terasology.core.world.generator.facetProviders.SeaLevelProvider;
 import org.terasology.core.world.generator.facetProviders.SurfaceToDensityProvider;
 import org.terasology.core.world.generator.rasterizers.FloraRasterizer;
-import org.terasology.dynamicCities.region.RegionEntityProvider;
+import org.terasology.dynamicCities.region.PopulationProvider;
 import org.terasology.dynamicCities.region.ResourceProvider;
 import org.terasology.dynamicCities.region.RoughnessProvider;
-import org.terasology.dynamicCities.sites.SiteFacetProvider;
 import org.terasology.dynamicCities.world.trees.DefaultTreeProvider;
 import org.terasology.engine.SimpleUri;
 import org.terasology.entitySystem.entity.EntityManager;
@@ -82,12 +81,11 @@ public class PerlinFacetedWorldGenerator extends BaseFacetedWorldGenerator {
                 .addProvider(new BiomeProvider())
                 .addProvider(new SurfaceToDensityProvider())
                 .addProvider(new RoughnessProvider())
-                .addProvider(new SiteFacetProvider())
+                .addProvider(new PopulationProvider())
                 .addProvider(new DefaultFloraProvider())
                 .addProvider(new DefaultTreeProvider())
                 //.addProvider(new PlateauProvider(spawnPos, seaLevel + 4, 10, 30))
                 .addProvider(new ResourceProvider())
-                .addEntities(new RegionEntityProvider(entityManager))
                 .addRasterizer(new SolidRasterizer())
                 .addPlugins()
                 .addRasterizer(new FloraRasterizer())
